@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f7f8fa">
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="apple-touch-icon" href="./icons/icon-192.png">
+<title>わたあめ販売レジ</title>
+<style>
+:root{font-family:-apple-system,BlinkMacSystemFont,"Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif;color:#17202a;background:#f4f6f8}
+*{box-sizing:border-box}
+body{margin:0;padding:18px 14px calc(24px + env(safe-area-inset-bottom));max-width:620px;margin-inline:auto}
+header{text-align:center;margin:8px 0 18px}
+h1{font-size:25px;margin:0 0 5px}
+.sub{color:#647180;font-size:13px}
+.panel{background:#fff;border-radius:18px;padding:17px;margin:12px 0;box-shadow:0 2px 12px #1522380c}
+.price{text-align:center;color:#52606d;font-size:14px}
+.price strong{display:block;font-size:30px;color:#17202a;margin-top:3px}
+.sell{width:100%;border:0;border-radius:17px;background:#17834b;color:white;font-size:25px;font-weight:750;padding:25px 12px;margin-top:14px;box-shadow:0 4px 0 #0d6035;touch-action:manipulation}
+.sell:active{transform:translateY(3px);box-shadow:0 1px 0 #0d6035}
+.metrics{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.metric{background:#f5f7f9;border-radius:13px;padding:13px 10px;text-align:center}
+.metric .label{font-size:12px;color:#637080}
+.metric .value{font-size:25px;font-weight:750;margin-top:5px;font-variant-numeric:tabular-nums}
+.metric.wide{grid-column:1/-1}
+.metric.wide .value{font-size:29px}
+.undo{width:100%;border:1px solid #d8dee5;background:#fff;border-radius:12px;padding:14px;font-size:16px;font-weight:650;color:#354252}
+.undo:disabled{opacity:.4}
+h2{font-size:16px;margin:0 0 12px}
+.log{display:flex;flex-direction:column;gap:9px}
+.entry{display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid #edf0f2;padding:7px 0}
+.entry:last-child{border:0}
+.entry small{display:block;color:#788391;margin-top:3px}
+.plus{color:#16834b;font-weight:700}
+.minus{color:#c04444;font-weight:700}
+.tools{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.tool{border:1px solid #d8dee5;background:#fff;border-radius:11px;padding:12px 8px;font-size:14px;font-weight:600}
+.note{font-size:12px;line-height:1.6;color:#6b7785;margin:10px 2px 0}
+.status{font-size:12px;color:#647180;text-align:center;margin-top:12px}
+input[type=file]{display:none}
+</style>
+</head>
+<body>
+<header>
+  <h1>🍭 わたあめ販売レジ</h1>
+  <div class="sub">オフライン対応・この端末内に記録</div>
+</header>
+
+<section class="panel">
+  <div class="price">販売価格 <strong>¥300 / 個</strong></div>
+  <button class="sell" id="sell">＋ 1個販売！</button>
+</section>
+
+<section class="panel">
+  <div class="metrics">
+    <div class="metric"><div class="label">販売個数</div><div class="value" id="count">0 個</div></div>
+    <div class="metric"><div class="label">売上合計</div><div class="value" id="sales">¥0</div></div>
+    <div class="metric wide"><div class="label">レジ内の想定現金</div><div class="value" id="cash">¥15,000</div></div>
+  </div>
+  <p class="note">想定現金 ＝ 最初の準備金 ¥15,000 ＋ 売上合計</p>
+</section>
+
+<section class="panel">
+  <button class="undo" id="undo" disabled>↶ 直前の販売を取り消す</button>
+  <p class="note">押し間違えたときに使います。取り消し記録も履歴に残ります。</p>
+</section>
+
+<section class="panel">
+  <h2>最近の記録</h2>
+  <div class="log" id="log"><div class="sub">まだ販売記録はありません。</div></div>
+</section>
+
+<section class="panel">
+  <h2>データの保存・持ち出し</h2>
+  <div class="tools">
+    <button class="tool" id="csv">📄 CSVを書き出す</button>
+    <button class="tool" id="backup">💾 バックアップ保存</button>
+    <button class="tool" id="restore">バックアップを読み込む</button>
+    <button class="tool" id="reset">記録をすべてリセット</button>
+  </div>
+  <input id="file" type="file" accept=".json,application/json">
+  <p class="note">記録はこのブラウザの保存領域に残ります。念のため、営業前後に「バックアップ保存」でファイルを保存してください。端末変更・ブラウザのデータ消去では記録が失われる場合があります。</p>
+  <div class="status" id="status">保存先：このiPadのブラウザ内</div>
+</section>
+
+<script>
+(() => {
+  "use strict";
+  const KEY = "cotton_candy_register_v1";
+  const PRICE = 300;
+  const INITIAL_CASH = 15000;
+  let events = [];
+
+  function load() {
+    try {
+      const raw = localStorage.getItem(KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) events = parsed;
+      }
+    } catch (e) {
+      alert("保存データを読み込めませんでした。バックアップファイルがあれば読み込んでください。");
+    }
+    render();
+  }
+  function persist() {
+    try {
+      localStorage.setItem(KEY, JSON.stringify(events));
+      document.getElementById("status").textContent = "保存済み：このiPadのブラウザ内";
+    } catch (e) {
+      document.getElementById("status").textContent = "保存できません。空き容量やブラウザ設定を確認してください。";
+      alert("端末内に保存できませんでした。バックアップを書き出してください。");
+    }
+    render();
+  }
+  function fmtYen(n) { return "¥" + Number(n).toLocaleString("ja-JP"); }
+  function activeSales() {
+    const canceled = new Set(events.filter(e => e.type === "undo").map(e => e.target));
+    return events.filter(e => e.type === "sale" && !canceled.has(e.id));
+  }
+  function render() {
+    const active = activeSales();
+    const count = active.length;
+    const total = count * PRICE;
+    document.getElementById("count").textContent = count.toLocaleString("ja-JP") + " 個";
+    document.getElementById("sales").textContent = fmtYen(total);
+    document.getElementById("cash").textContent = fmtYen(INITIAL_CASH + total);
+    document.getElementById("undo").disabled = count === 0;
+
+    const log = document.getElementById("log");
+    const recent = events.slice(-12).reverse();
+    if (!recent.length) {
+      log.innerHTML = '<div class="sub">まだ販売記録はありません。</div>';
+      return;
+    }
+    log.replaceChildren();
+    for (const e of recent) {
+      const row = document.createElement("div");
+      row.className = "entry";
+      const left = document.createElement("div");
+      const title = document.createElement("div");
+      title.textContent = e.type === "sale" ? "販売 1個" : "販売取り消し";
+      const time = document.createElement("small");
+      time.textContent = new Date(e.time).toLocaleString("ja-JP");
+      left.append(title, time);
+      const right = document.createElement("div");
+      right.className = e.type === "sale" ? "plus" : "minus";
+      right.textContent = e.type === "sale" ? "+¥300" : "−¥300";
+      row.append(left, right);
+      log.append(row);
+    }
+  }
+  document.getElementById("sell").addEventListener("click", () => {
+    events.push({type:"sale", id: (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random()), time:new Date().toISOString()});
+    persist();
+  });
+  document.getElementById("undo").addEventListener("click", () => {
+    const active = activeSales();
+    if (!active.length) return;
+    const last = active[active.length - 1];
+    events.push({type:"undo", target:last.id, time:new Date().toISOString()});
+    persist();
+  });
+  document.getElementById("csv").addEventListener("click", () => {
+    const rows = [["日時","記録","個数増減","金額増減"]];
+    for (const e of events) rows.push([
+      new Date(e.time).toLocaleString("ja-JP"),
+      e.type === "sale" ? "販売" : "取り消し",
+      e.type === "sale" ? "1" : "-1",
+      e.type === "sale" ? "300" : "-300"
+    ]);
+    const csv = "\uFEFF" + rows.map(r => r.map(v => '"' + String(v).replace(/"/g,'""') + '"').join(",")).join("\r\n");
+    download(new Blob([csv], {type:"text/csv;charset=utf-8"}), "わたあめ販売記録.csv");
+  });
+  document.getElementById("backup").addEventListener("click", () => {
+    download(new Blob([JSON.stringify({version:1, events}, null, 2)], {type:"application/json"}), "わたあめレジ_backup.json");
+  });
+  function download(blob, name) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+  }
+  document.getElementById("restore").addEventListener("click", () => document.getElementById("file").click());
+  document.getElementById("file").addEventListener("change", async (ev) => {
+    const file = ev.target.files[0];
+    if (!file) return;
+    try {
+      const data = JSON.parse(await file.text());
+      const imported = Array.isArray(data) ? data : data.events;
+      if (!Array.isArray(imported) || !imported.every(e => e && ["sale","undo"].includes(e.type) && typeof e.time === "string")) throw new Error("形式が違います");
+      if (!confirm("現在の記録をバックアップの内容に置き換えます。よろしいですか？")) return;
+      events = imported;
+      persist();
+      alert("バックアップを読み込みました。");
+    } catch (err) {
+      alert("バックアップを読み込めませんでした。正しいJSONファイルを選んでください。");
+    } finally { ev.target.value = ""; }
+  });
+  document.getElementById("reset").addEventListener("click", () => {
+    if (!confirm("販売記録をすべて削除します。この操作は元に戻せません。先にバックアップを保存しましたか？")) return;
+    events = [];
+    persist();
+  });
+  load();
+})();
+</script>
+<script>
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("./sw.js").catch(() => {
+      const s = document.getElementById("status");
+      if (s) s.textContent = "オフライン機能の準備に失敗しました。ネット接続時に再読み込みしてください。";
+    });
+  });
+}
+</script>
+</body>
+</html>
